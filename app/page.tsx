@@ -1,0 +1,117 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useMemo, useState, type CSSProperties } from "react";
+
+type Food = {
+  id: string;
+  name: string;
+  calories: number;
+  portion: string;
+  protein: number;
+  carbs: number;
+  fat: number;
+  createdAt: string;
+  source?: string;
+};
+
+const initialFoods: Food[] = [
+  { id: "demo-1", name: "Avena con frutos rojos", calories: 320, portion: "1 bowl", protein: 12, carbs: 48, fat: 9, createdAt: new Date().toISOString(), source: "IA" },
+  { id: "demo-2", name: "Pechuga de pollo a la plancha", calories: 280, portion: "150 g", protein: 42, carbs: 0, fat: 12, createdAt: new Date().toISOString(), source: "IA" },
+  { id: "demo-3", name: "Huevo cocido", calories: 78, portion: "1 pieza", protein: 6, carbs: 0.6, fat: 5, createdAt: new Date().toISOString(), source: "IA" },
+];
+
+function Icon({ name }: { name: "search" | "home" | "history" | "settings" | "plus" | "sparkle" | "trash" | "fire" | "target" | "clock" | "check" }) {
+  const paths = {
+    search: "M21 21l-4.35-4.35m2.35-5.65a8 8 0 11-16 0 8 8 0 0116 0z",
+    home: "M3 10.5L12 3l9 7.5v9a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 19.5v-9zM9 21v-6h6v6",
+    history: "M3 12a9 9 0 109-9 9.4 9.4 0 00-6.2 2.4L3 8.2M3 3v5.2h5.2M12 7v5l3 2",
+    settings: "M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4zM19.4 15a1.7 1.7 0 01.3 1.9l-.1.2-1.7 1.7-.2.1a1.7 1.7 0 01-1.9-.3l-1-1a7.7 7.7 0 01-1.5.6v1.4a1.7 1.7 0 01-1.7 1.7H9.2a1.7 1.7 0 01-1.7-1.7v-1.4a7.7 7.7 0 01-1.5-.6l-1 1a1.7 1.7 0 01-1.9.3l-.2-.1-1.7-1.7-.1-.2A1.7 1.7 0 011.4 15l1-1a7.7 7.7 0 01-.6-1.5H.4A1.7 1.7 0 01-1.3 10.8V8.4A1.7 1.7 0 01.4 6.7h1.4a7.7 7.7 0 01.6-1.5l-1-1A1.7 1.7 0 011.1 2.3l.1-.2L2.9.4l.2-.1A1.7 1.7 0 015 .6l1 1a7.7 7.7 0 011.5-.6V-.4A1.7 1.7 0 019.2-2.1h2.4a1.7 1.7 0 011.7 1.7V1a7.7 7.7 0 011.5.6l1-1a1.7 1.7 0 011.9-.3l.2.1 1.7 1.7.1.2a1.7 1.7 0 01-.3 1.9l-1 1a7.7 7.7 0 01.6 1.5h1.4a1.7 1.7 0 011.7 1.7v2.4a1.7 1.7 0 01-1.7 1.7h-1.4a7.7 7.7 0 01-.6 1.5l1 1z",
+    plus: "M12 5v14M5 12h14", sparkle: "M12 3l1.4 5.6L19 10l-5.6 1.4L12 17l-1.4-5.6L5 10l5.6-1.4L12 3zM19 17v4M17 19h4", trash: "M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3", fire: "M12.2 22c4.3 0 7.3-2.8 7.3-7.1 0-3.2-1.8-5.8-4.6-8.9.1 2.7-1.2 4.1-2.3 4.8.3-4.2-1.8-7.1-5-8.8.4 4.5-3.2 6.7-3.2 11.4C4.4 18.8 7.7 22 12.2 22z", target: "M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8M16 12a4 4 0 11-8 0 4 4 0 018 0z", clock: "M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z", check: "M5 12l4 4L19 6",
+  };
+  return <svg aria-hidden="true" className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>;
+}
+
+export default function Home() {
+  const router = useRouter();
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [session, setSession] = useState<{ fullName: string; role: string } | null>(null);
+  const [foods, setFoods] = useState<Food[]>(() => {
+    if (typeof window === "undefined") return initialFoods;
+    const saved = localStorage.getItem("proceso-foods");
+    return saved ? JSON.parse(saved) : initialFoods;
+  });
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [goal, setGoal] = useState(2000);
+
+  useEffect(() => localStorage.setItem("proceso-foods", JSON.stringify(foods)), [foods]);
+
+  useEffect(() => {
+    fetch("/api/auth/me").then((response) => response.ok ? response.json() : null).then((result) => {
+      if (result?.user) setSession(result.user); else router.replace("/login");
+      setSessionLoading(false);
+    }).catch(() => { router.replace("/login"); setSessionLoading(false); });
+  }, [router]);
+
+  useEffect(() => {
+    fetch("/api/process").then((response) => response.ok ? response.json() : null).then((result) => {
+      if (result?.connected) setFoods(result.data);
+    }).catch(() => undefined);
+  }, []);
+
+  const total = useMemo(() => foods.reduce((sum, food) => sum + food.calories, 0), [foods]);
+  const remaining = Math.max(goal - total, 0);
+  const progress = Math.min((total / goal) * 100, 100);
+
+  async function analyze(event: FormEvent) {
+    event.preventDefault();
+    if (!query.trim()) return;
+    setLoading(true); setNotice("");
+    try {
+      const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+      if (!response.ok) throw new Error("No se pudo analizar");
+      const result = await response.json();
+      const food: Food = { ...result, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
+      setFoods((current) => [food, ...current]);
+      await fetch("/api/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(food) });
+      setQuery(""); setNotice("Guardado en tu proceso de hoy");
+    } catch { setNotice("No pudimos analizarlo. Intenta de nuevo."); }
+    finally { setLoading(false); }
+  }
+
+  async function remove(id: string) {
+    setFoods((current) => current.filter((food) => food.id !== id));
+    await fetch(`/api/process?id=${id}`, { method: "DELETE" }).catch(() => undefined);
+  }
+
+  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.replace("/login"); }
+
+  if (sessionLoading) return <main className="loading-page">Cargando tu proceso...</main>;
+  if (!session) return null;
+
+  return (
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div className="brand"><span className="brand-mark"><Icon name="fire" /></span><span>proceso</span></div>
+        <nav><button className="nav-item active"><Icon name="home" /> Inicio</button><button className="nav-item"><Icon name="history" /> Historial</button><button className="nav-item"><Icon name="settings" /> Ajustes</button></nav>
+        <div className="sidebar-bottom"><div className="avatar">{session.fullName.slice(0, 2).toUpperCase()}</div><div><strong>{session.fullName}</strong><small>{session.role === "admin" ? "Administrador" : "Plan personal"}</small></div><button onClick={logout} className="logout">Salir</button></div>
+      </aside>
+
+      <section className="content">
+        <header className="topbar"><div><p className="eyebrow">MIÉRCOLES, 16 JULIO 2026</p><h1>Tu día, en equilibrio.</h1></div><div className="header-actions">{session.role === "admin" && <Link className="admin-link" href="/admin/users">Usuarios</Link>}<span className="streak"><Icon name="fire" /> 4 días</span><button className="mini-avatar">{session.fullName.slice(0, 2).toUpperCase()}</button></div></header>
+
+        <div className="dashboard-grid">
+          <section className="hero-card"><div className="hero-copy"><div className="ai-label"><Icon name="sparkle" /> ASISTENTE IA</div><h2>¿Qué comiste hoy?</h2><p>Escribe un alimento y calculamos sus calorías por ti.</p><form onSubmit={analyze} className="search-box"><Icon name="search" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ej. un huevo cocido" aria-label="Alimento" /><button type="submit" disabled={loading}>{loading ? "Analizando..." : "Analizar"}</button></form><div className="suggestions"><span>Prueba con</span><button onClick={() => setQuery("un huevo cocido")}>un huevo cocido</button><button onClick={() => setQuery("una manzana")}>una manzana</button><button onClick={() => setQuery("150 g de arroz")}>150 g de arroz</button></div>{notice && <div className="notice"><Icon name="check" /> {notice}</div>}</div><div className="hero-orb"><span>✦</span><i>✦</i></div></section>
+
+          <section className="summary-card"><div className="card-heading"><span>RESUMEN DE HOY</span><button aria-label="Más opciones">•••</button></div><div className="calorie-row"><div><strong>{total.toLocaleString("es-MX")}</strong><span> kcal consumidas</span></div><div className="ring" style={{ "--progress": `${progress * 3.6}deg` } as CSSProperties}><b>{Math.round(progress)}%</b></div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="goal-row"><span>Meta diaria</span><button onClick={() => setGoal(goal === 2000 ? 2200 : 2000)}>{goal.toLocaleString("es-MX")} kcal <Icon name="target" /></button></div><div className="remaining"><span>Te quedan</span><strong>{remaining.toLocaleString("es-MX")} kcal</strong></div></section>
+        </div>
+
+        <section className="process-section"><div className="section-title"><div><h2>Tu proceso</h2><p>Todo lo que has registrado hoy</p></div><button className="add-button" onClick={() => document.querySelector<HTMLInputElement>(".search-box input")?.focus()}><Icon name="plus" /> Agregar alimento</button></div><div className="food-list">{foods.length ? foods.map((food) => <article className="food-item" key={food.id}><div className="food-icon">{food.name.toLowerCase().includes("huevo") ? "🥚" : food.name.toLowerCase().includes("pollo") ? "🍗" : food.name.toLowerCase().includes("avena") ? "🥣" : "🍽️"}</div><div className="food-info"><h3>{food.name}</h3><p>{food.portion} <span>·</span> <em><Icon name="sparkle" /> {food.source || "IA"}</em></p></div><div className="macros"><span><b>{food.protein}g</b> proteína</span><span><b>{food.carbs}g</b> carbos</span><span><b>{food.fat}g</b> grasa</span></div><div className="food-calories"><strong>{food.calories}</strong><small>kcal</small></div><button className="delete-button" onClick={() => remove(food.id)} aria-label={`Eliminar ${food.name}`}><Icon name="trash" /></button></article>) : <div className="empty-state">Aún no tienes alimentos registrados. Busca el primero arriba.</div>}</div></section>
+        <footer><span>● Base de datos <b>proceso</b></span><span><Icon name="clock" /> Última sincronización: ahora</span></footer>
+      </section>
+    </main>
+  );
+}
