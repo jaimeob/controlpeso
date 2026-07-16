@@ -12,14 +12,16 @@ type Food = {
   protein: number;
   carbs: number;
   fat: number;
+  quantity: number;
+  unit: string;
   createdAt: string;
   source?: string;
 };
 
 const initialFoods: Food[] = [
-  { id: "demo-1", name: "Avena con frutos rojos", calories: 320, portion: "1 bowl", protein: 12, carbs: 48, fat: 9, createdAt: new Date().toISOString(), source: "IA" },
-  { id: "demo-2", name: "Pechuga de pollo a la plancha", calories: 280, portion: "150 g", protein: 42, carbs: 0, fat: 12, createdAt: new Date().toISOString(), source: "IA" },
-  { id: "demo-3", name: "Huevo cocido", calories: 78, portion: "1 pieza", protein: 6, carbs: 0.6, fat: 5, createdAt: new Date().toISOString(), source: "IA" },
+  { id: "demo-1", name: "Avena con frutos rojos", calories: 320, portion: "1 bowl", quantity: 1, unit: "pieza", protein: 12, carbs: 48, fat: 9, createdAt: new Date().toISOString(), source: "IA" },
+  { id: "demo-2", name: "Pechuga de pollo a la plancha", calories: 280, portion: "150 g", quantity: 150, unit: "gramos", protein: 42, carbs: 0, fat: 12, createdAt: new Date().toISOString(), source: "IA" },
+  { id: "demo-3", name: "Huevo cocido", calories: 78, portion: "1 pieza", quantity: 1, unit: "pieza", protein: 6, carbs: 0.6, fat: 5, createdAt: new Date().toISOString(), source: "IA" },
 ];
 
 function Icon({ name }: { name: "search" | "home" | "history" | "settings" | "plus" | "sparkle" | "trash" | "fire" | "target" | "clock" | "check" }) {
@@ -36,81 +38,153 @@ function Icon({ name }: { name: "search" | "home" | "history" | "settings" | "pl
 export default function Home() {
   const router = useRouter();
   const [sessionLoading, setSessionLoading] = useState(true);
-  const [session, setSession] = useState<{ fullName: string; role: string } | null>(null);
+  const [session, setSession] = useState<{ fullName: string; role: string; roles: string[] } | null>(null);
+  const [sessionError, setSessionError] = useState("");
   const [foods, setFoods] = useState<Food[]>(() => {
     if (typeof window === "undefined") return initialFoods;
     const saved = localStorage.getItem("proceso-foods");
     return saved ? JSON.parse(saved) : initialFoods;
   });
   const [query, setQuery] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [unit, setUnit] = useState("pieza");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manual, setManual] = useState({ name: "", quantity: 1, unit: "pieza", calories: "", protein: "", carbs: "", fat: "" });
+  const [editingFood, setEditingFood] = useState<Food | null>(null);
+  const [foodToDelete, setFoodToDelete] = useState<Food | null>(null);
   const [loading, setLoading] = useState(false);
+  const [savingFood, setSavingFood] = useState(false);
   const [notice, setNotice] = useState("");
   const [goal, setGoal] = useState(2000);
+  const [weeklyGoal, setWeeklyGoal] = useState(14000);
 
   useEffect(() => localStorage.setItem("proceso-foods", JSON.stringify(foods)), [foods]);
 
   useEffect(() => {
-    fetch("/api/auth/me").then((response) => response.ok ? response.json() : null).then((result) => {
-      if (result?.user) setSession(result.user); else router.replace("/login");
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      controller.abort();
+      setSessionError("La sesión tardó demasiado en responder. Inicia sesión de nuevo.");
       setSessionLoading(false);
-    }).catch(() => { router.replace("/login"); setSessionLoading(false); });
+    }, 8000);
+
+    fetch("/api/auth/me", { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((result) => {
+        if (result?.user) setSession(result.user);
+        else router.replace("/login");
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) router.replace("/login");
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+        setSessionLoading(false);
+      });
+
+    return () => { controller.abort(); window.clearTimeout(timer); };
   }, [router]);
 
   useEffect(() => {
-    fetch("/api/process").then((response) => response.ok ? response.json() : null).then((result) => {
-      if (result?.connected) setFoods(result.data);
+    fetch("/api/process", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((result) => {
+      if (result?.connected) {
+        setFoods(result.data);
+        setGoal(Number(result.goals?.daily) || 2000);
+        setWeeklyGoal(Number(result.goals?.weekly) || (Number(result.goals?.daily) || 2000) * 7);
+      }
     }).catch(() => undefined);
   }, []);
 
-  const total = useMemo(() => foods.reduce((sum, food) => sum + food.calories, 0), [foods]);
+  const todayFoods = useMemo(() => foods.filter(isToday), [foods]);
+  const total = useMemo(() => todayFoods.reduce((sum, food) => sum + food.calories, 0), [todayFoods]);
+  const weeklyTotal = useMemo(() => {
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+    since.setDate(since.getDate() - 6);
+    return foods.reduce((sum, food) => new Date(food.createdAt) >= since ? sum + food.calories : sum, 0);
+  }, [foods]);
   const remaining = Math.max(goal - total, 0);
   const progress = Math.min((total / goal) * 100, 100);
+  const weeklyProgress = Math.min((weeklyTotal / weeklyGoal) * 100, 100);
 
   async function analyze(event: FormEvent) {
     event.preventDefault();
     if (!query.trim()) return;
     setLoading(true); setNotice("");
     try {
-      const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+      const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, quantity, unit }) });
       if (!response.ok) throw new Error("No se pudo analizar");
       const result = await response.json();
       const food: Food = { ...result, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
+      const saveResponse = await fetch("/api/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(food) });
+      const saved = await saveResponse.json();
+      if (!saveResponse.ok) throw new Error(saved.error || "No se pudo guardar el alimento.");
       setFoods((current) => [food, ...current]);
-      await fetch("/api/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(food) });
-      setQuery(""); setNotice("Guardado en tu proceso de hoy");
-    } catch { setNotice("No pudimos analizarlo. Intenta de nuevo."); }
+      setQuery(""); setQuantity(1); setUnit("pieza"); setNotice("Guardado en tu proceso de hoy");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "No pudimos analizarlo. Intenta de nuevo."); }
     finally { setLoading(false); }
   }
 
-  async function remove(id: string) {
-    setFoods((current) => current.filter((food) => food.id !== id));
-    await fetch(`/api/process?id=${id}`, { method: "DELETE" }).catch(() => undefined);
+  async function remove() {
+    if (!foodToDelete) return;
+    const response = await fetch(`/api/process?id=${foodToDelete.id}`, { method: "DELETE" });
+    if (response.ok) { setFoods((current) => current.filter((food) => food.id !== foodToDelete.id)); setNotice("Alimento eliminado"); }
+    else setNotice((await response.json()).error || "No se pudo eliminar el alimento");
+    setFoodToDelete(null);
   }
+
+  async function addManually(event: FormEvent) {
+    event.preventDefault();
+    if (!manual.name.trim() || !manual.calories) return;
+    const food: Food = { id: editingFood?.id || crypto.randomUUID(), name: manual.name.trim(), portion: `${manual.quantity} ${manual.unit}`, quantity: Number(manual.quantity) || 1, unit: manual.unit, calories: Number(manual.calories), protein: Number(manual.protein) || 0, carbs: Number(manual.carbs) || 0, fat: Number(manual.fat) || 0, createdAt: editingFood?.createdAt || new Date().toISOString(), source: editingFood?.source || "Manual" };
+    setSavingFood(true); setNotice("");
+    try {
+      const response = await fetch("/api/process", { method: editingFood ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(food) });
+      const saved = await response.json();
+      if (!response.ok) throw new Error(saved.error || "No se pudo guardar el alimento.");
+      setFoods((current) => editingFood ? current.map((item) => item.id === food.id ? food : item) : [food, ...current]);
+      setManualOpen(false); setEditingFood(null); setManual({ name: "", quantity: 1, unit: "pieza", calories: "", protein: "", carbs: "", fat: "" }); setNotice(editingFood ? "Alimento actualizado y guardado." : "Alimento manual guardado en tu proceso.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo guardar el alimento.");
+    } finally {
+      setSavingFood(false);
+    }
+  }
+
+  function openManual(food?: Food) {
+    setEditingFood(food || null);
+    setManual(food ? { name: food.name, quantity: food.quantity || 1, unit: food.unit || "pieza", calories: String(food.calories), protein: String(food.protein), carbs: String(food.carbs), fat: String(food.fat) } : { name: "", quantity: 1, unit: "pieza", calories: "", protein: "", carbs: "", fat: "" });
+    setManualOpen(true);
+  }
+
+  function isToday(food: Food) { return new Date(food.createdAt).toDateString() === new Date().toDateString(); }
 
   async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.replace("/login"); }
 
   if (sessionLoading) return <main className="loading-page">Cargando tu proceso...</main>;
-  if (!session) return null;
+  if (!session) return <main className="loading-page"><div><p>{sessionError || "Redirigiendo al inicio de sesión..."}</p><Link href="/login">Ir a iniciar sesión</Link></div></main>;
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark"><Icon name="fire" /></span><span>proceso</span></div>
-        <nav><button className="nav-item active"><Icon name="home" /> Inicio</button><button className="nav-item"><Icon name="history" /> Historial</button><button className="nav-item"><Icon name="settings" /> Ajustes</button></nav>
-        <div className="sidebar-bottom"><div className="avatar">{session.fullName.slice(0, 2).toUpperCase()}</div><div><strong>{session.fullName}</strong><small>{session.role === "admin" ? "Administrador" : "Plan personal"}</small></div><button onClick={logout} className="logout">Salir</button></div>
+        <nav><button className="nav-item active"><Icon name="home" /> Inicio</button><Link className="nav-item" href="/reports"><Icon name="history" /> Reportes</Link><Link className="nav-item" href="/profile"><Icon name="settings" /> Mi ficha</Link></nav>
+        <div className="sidebar-bottom"><div className="avatar">{session.fullName.slice(0, 2).toUpperCase()}</div><div><strong>{session.fullName}</strong><small>{session.roles.includes("superadmin") ? "Superadmin" : [session.roles.includes("admin") && "Nutriólogo", session.roles.includes("patient") && "Paciente"].filter(Boolean).join(" y ")}</small></div><button onClick={logout} className="logout">Salir</button></div>
       </aside>
 
       <section className="content">
-        <header className="topbar"><div><p className="eyebrow">MIÉRCOLES, 16 JULIO 2026</p><h1>Tu día, en equilibrio.</h1></div><div className="header-actions">{session.role === "admin" && <Link className="admin-link" href="/admin/users">Usuarios</Link>}<span className="streak"><Icon name="fire" /> 4 días</span><button className="mini-avatar">{session.fullName.slice(0, 2).toUpperCase()}</button></div></header>
+        <header className="topbar"><div><p className="eyebrow">MIÉRCOLES, 16 JULIO 2026</p><h1>Tu día, en equilibrio.</h1></div><div className="header-actions">{(session.role === "admin" || session.role === "superadmin") && <Link className="admin-link" href="/admin/users">{session.role === "superadmin" ? "Equipo" : "Pacientes"}</Link>}<span className="streak"><Icon name="fire" /> 4 días</span><button className="mini-avatar">{session.fullName.slice(0, 2).toUpperCase()}</button></div></header>
 
         <div className="dashboard-grid">
-          <section className="hero-card"><div className="hero-copy"><div className="ai-label"><Icon name="sparkle" /> ASISTENTE IA</div><h2>¿Qué comiste hoy?</h2><p>Escribe un alimento y calculamos sus calorías por ti.</p><form onSubmit={analyze} className="search-box"><Icon name="search" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ej. un huevo cocido" aria-label="Alimento" /><button type="submit" disabled={loading}>{loading ? "Analizando..." : "Analizar"}</button></form><div className="suggestions"><span>Prueba con</span><button onClick={() => setQuery("un huevo cocido")}>un huevo cocido</button><button onClick={() => setQuery("una manzana")}>una manzana</button><button onClick={() => setQuery("150 g de arroz")}>150 g de arroz</button></div>{notice && <div className="notice"><Icon name="check" /> {notice}</div>}</div><div className="hero-orb"><span>✦</span><i>✦</i></div></section>
+          <section className="hero-card"><div className="hero-copy"><div className="ai-label"><Icon name="sparkle" /> ASISTENTE IA</div><h2>¿Qué comiste hoy?</h2><p>Indica el alimento, la cantidad y su unidad.</p><form onSubmit={analyze} className="food-form"><div className="search-box"><Icon name="search" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ej. huevo cocido o pechuga" aria-label="Alimento" /><button type="submit" disabled={loading}>{loading ? "Analizando..." : "Analizar"}</button></div><div className="quantity-row"><label>Cantidad<input type="number" min="0.1" step="0.1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></label><label>Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)}><option value="pieza">Piezas</option><option value="gramos">Gramos</option><option value="mililitros">Mililitros</option></select></label></div></form>{notice && <div className="notice"><Icon name="check" /> {notice}</div>}</div><div className="hero-orb"><span>✦</span><i>✦</i></div></section>
 
-          <section className="summary-card"><div className="card-heading"><span>RESUMEN DE HOY</span><button aria-label="Más opciones">•••</button></div><div className="calorie-row"><div><strong>{total.toLocaleString("es-MX")}</strong><span> kcal consumidas</span></div><div className="ring" style={{ "--progress": `${progress * 3.6}deg` } as CSSProperties}><b>{Math.round(progress)}%</b></div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="goal-row"><span>Meta diaria</span><button onClick={() => setGoal(goal === 2000 ? 2200 : 2000)}>{goal.toLocaleString("es-MX")} kcal <Icon name="target" /></button></div><div className="remaining"><span>Te quedan</span><strong>{remaining.toLocaleString("es-MX")} kcal</strong></div></section>
+          <section className="summary-card"><div className="card-heading"><span>RESUMEN DE HOY</span><button aria-label="Más opciones">•••</button></div><div className="calorie-row"><div><strong>{total.toLocaleString("es-MX")}</strong><span> kcal consumidas</span></div><div className="ring" style={{ "--progress": `${progress * 3.6}deg` } as CSSProperties}><b>{Math.round(progress)}%</b></div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="goal-row"><span>Meta diaria</span><strong>{goal.toLocaleString("es-MX")} kcal <Icon name="target" /></strong></div><div className="remaining"><span>Te quedan</span><strong>{remaining.toLocaleString("es-MX")} kcal</strong></div><div className="weekly-summary"><div><span>Meta semanal</span><strong>{weeklyTotal.toLocaleString("es-MX")} / {weeklyGoal.toLocaleString("es-MX")} kcal</strong></div><div className="weekly-track"><span style={{ width: `${weeklyProgress}%` }} /></div></div></section>
         </div>
 
-        <section className="process-section"><div className="section-title"><div><h2>Tu proceso</h2><p>Todo lo que has registrado hoy</p></div><button className="add-button" onClick={() => document.querySelector<HTMLInputElement>(".search-box input")?.focus()}><Icon name="plus" /> Agregar alimento</button></div><div className="food-list">{foods.length ? foods.map((food) => <article className="food-item" key={food.id}><div className="food-icon">{food.name.toLowerCase().includes("huevo") ? "🥚" : food.name.toLowerCase().includes("pollo") ? "🍗" : food.name.toLowerCase().includes("avena") ? "🥣" : "🍽️"}</div><div className="food-info"><h3>{food.name}</h3><p>{food.portion} <span>·</span> <em><Icon name="sparkle" /> {food.source || "IA"}</em></p></div><div className="macros"><span><b>{food.protein}g</b> proteína</span><span><b>{food.carbs}g</b> carbos</span><span><b>{food.fat}g</b> grasa</span></div><div className="food-calories"><strong>{food.calories}</strong><small>kcal</small></div><button className="delete-button" onClick={() => remove(food.id)} aria-label={`Eliminar ${food.name}`}><Icon name="trash" /></button></article>) : <div className="empty-state">Aún no tienes alimentos registrados. Busca el primero arriba.</div>}</div></section>
+        <section className="process-section"><div className="section-title"><div><h2>Tu proceso</h2><p>Todo lo que has registrado hoy</p></div><button className="add-button" onClick={() => openManual()}><Icon name="plus" /> Agregar alimento</button></div><div className="food-list">{foods.length ? foods.map((food) => <article className="food-item" key={food.id}><div className="food-icon">{food.name.toLowerCase().includes("huevo") ? "🥚" : food.name.toLowerCase().includes("pollo") ? "🍗" : food.name.toLowerCase().includes("avena") ? "🥣" : "🍽️"}</div><div className="food-info"><h3>{food.name}</h3><p>{food.quantity ?? 1} {food.unit ?? "pieza"} <span>·</span> <em><Icon name="sparkle" /> {food.source || "IA"}</em></p></div><div className="macros"><span><b>{food.protein}g</b> proteína</span><span><b>{food.carbs}g</b> carbos</span><span><b>{food.fat}g</b> grasa</span></div><div className="food-calories"><strong>{food.calories}</strong><small>kcal</small></div>{isToday(food) ? <><button className="edit-food" onClick={() => openManual(food)} aria-label={`Editar ${food.name}`}>Editar</button><button className="delete-button" onClick={() => setFoodToDelete(food)} aria-label={`Eliminar ${food.name}`}><Icon name="trash" /></button></> : <span className="closed-food">Cerrado</span>}</article>) : <div className="empty-state">Aún no tienes alimentos registrados. Busca el primero arriba.</div>}</div></section>
         <footer><span>● Base de datos <b>proceso</b></span><span><Icon name="clock" /> Última sincronización: ahora</span></footer>
+        {manualOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => { if (!savingFood) { setManualOpen(false); setEditingFood(null); } }}><form className="manual-modal" onSubmit={addManually} onMouseDown={(event) => event.stopPropagation()}><div className="modal-title"><div><p className="eyebrow">{editingFood ? "CORREGIR REGISTRO" : "REGISTRO MANUAL"}</p><h2>{editingFood ? "Editar alimento" : "Agregar alimento"}</h2></div><button type="button" aria-label="Cerrar" disabled={savingFood} onClick={() => { setManualOpen(false); setEditingFood(null); }}>×</button></div><label>Alimento<input autoFocus value={manual.name} onChange={(event) => setManual({ ...manual, name: event.target.value })} placeholder="Ej. carne asada" required /></label><div className="manual-grid"><label>Cantidad<input type="number" min="0.1" step="0.1" value={manual.quantity} onChange={(event) => setManual({ ...manual, quantity: Number(event.target.value) })} required /></label><label>Unidad<select value={manual.unit} onChange={(event) => setManual({ ...manual, unit: event.target.value })}><option value="pieza">Piezas</option><option value="gramos">Gramos</option><option value="mililitros">Mililitros</option></select></label><label>Calorías (kcal)<input type="number" min="0" value={manual.calories} onChange={(event) => setManual({ ...manual, calories: event.target.value })} required /></label></div><p className="manual-help">Macronutrientes opcionales</p><div className="manual-grid three"><label>Proteína (g)<input type="number" min="0" step="0.1" value={manual.protein} onChange={(event) => setManual({ ...manual, protein: event.target.value })} /></label><label>Carbos (g)<input type="number" min="0" step="0.1" value={manual.carbs} onChange={(event) => setManual({ ...manual, carbs: event.target.value })} /></label><label>Grasa (g)<input type="number" min="0" step="0.1" value={manual.fat} onChange={(event) => setManual({ ...manual, fat: event.target.value })} /></label></div><button className="save-manual" type="submit" disabled={savingFood}>{savingFood ? "Guardando..." : editingFood ? "Guardar corrección" : "Guardar alimento"}</button></form></div>}
+        {foodToDelete && <div className="modal-backdrop" role="presentation" onMouseDown={() => setFoodToDelete(null)}><section className="confirm-modal" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">CONFIRMAR ELIMINACIÓN</p><h2>¿Eliminar “{foodToDelete.name}”?</h2><p>Este alimento dejará de contar en tus calorías y reportes de hoy.</p><div><button className="cancel-delete" onClick={() => setFoodToDelete(null)}>Cancelar</button><button className="confirm-delete" onClick={remove}>Sí, eliminar</button></div></section></div>}
       </section>
     </main>
   );
