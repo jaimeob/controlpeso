@@ -19,7 +19,12 @@ export async function POST(request: Request) {
     if (response.ok) { const data = await response.json(); return Response.json({ ...JSON.parse(data.choices[0].message.content), quantity, unit, source: "IA" }); }
   }
   const match = Object.entries(foodBases).find(([key]) => query.toLowerCase().includes(key))?.[1];
-  if (!match) return Response.json({ name: query.trim(), calories: 150, portion: `${quantity} ${unit}`, protein: 8, carbs: 18, fat: 6, quantity, unit, source: "Estimación" });
+  if (!match) {
+    const base = unit === "pieza" ? 1 : 100;
+    const factor = quantity / base;
+    const round = (value: number) => Math.round(value * factor * 10) / 10;
+    return Response.json({ name: query.trim(), calories: Math.round(150 * factor), portion: `${quantity} ${unit}`, protein: round(8), carbs: round(18), fat: round(6), quantity, unit, source: "Estimación" });
+  }
   const factor = unit === match.baseUnit ? quantity / match.base : 1;
   const round = (value: number) => Math.round(value * factor * 10) / 10;
   return Response.json({ name: match.name, calories: Math.round(match.calories * factor), portion: `${quantity} ${unit}`, protein: round(match.protein), carbs: round(match.carbs), fat: round(match.fat), quantity, unit, source: match.source });
