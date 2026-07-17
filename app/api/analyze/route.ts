@@ -1,3 +1,5 @@
+import { getSessionUser } from "@/lib/supabase-server";
+
 type FoodResult = { name: string; calories: number; portion: string; protein: number; carbs: number; fat: number; source: string; quantity: number; unit: string };
 
 const foodBases: Record<string, Omit<FoodResult, "quantity" | "unit"> & { base: number; baseUnit: string }> = {
@@ -9,6 +11,10 @@ const foodBases: Record<string, Omit<FoodResult, "quantity" | "unit"> & { base: 
 };
 
 export async function POST(request: Request) {
+  const user = await getSessionUser();
+  if (!user) return Response.json({ error: "No autorizado" }, { status: 401 });
+  if (!user.roles.includes("superadmin")) return Response.json({ error: "El asistente de IA está disponible únicamente para superadministradores." }, { status: 403 });
+
   const { query, quantity: inputQuantity, unit: inputUnit } = await request.json();
   if (!query?.trim()) return Response.json({ error: "Escribe un alimento" }, { status: 400 });
   const quantity = Math.max(Number(inputQuantity) || 1, 0.1);
